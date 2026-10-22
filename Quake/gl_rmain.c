@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // r_main.c
 
 #include "quakedef.h"
+#include "openxr_display.h"
 #include "r_ssao.h"
 #include "tasks.h"
 #include "atomics.h"
@@ -51,6 +52,9 @@ vec3_t vright;
 vec3_t r_origin;
 
 float r_fovx, r_fovy; // johnfitz -- rendering fov may be different becuase of r_waterwarp
+#ifdef USE_OPENXR
+static float xr_projection_scale[2];
+#endif
 
 //
 // screen size info
@@ -333,6 +337,14 @@ static void R_SetupMatrices ()
 {
 	// Projection matrix
 	GL_FrustumMatrix (vulkan_globals.projection_matrix, DEG2RAD (r_fovx), DEG2RAD (r_fovy));
+#ifdef USE_OPENXR
+	if (OXR_Eye () >= 0)
+	{
+		OXR_Projection (vulkan_globals.projection_matrix);
+		vulkan_globals.projection_matrix[0] *= xr_projection_scale[0];
+		vulkan_globals.projection_matrix[5] *= xr_projection_scale[1];
+	}
+#endif
 
 	// View matrix
 	float rotation_matrix[16];
@@ -404,6 +416,14 @@ static void R_SetupViewBeforeMark (void *unused)
 	// build the transformation matrix for the given view angles
 	VectorCopy (r_refdef.vieworg, r_origin);
 	AngleVectors (r_refdef.viewangles, vpn, vright, vup);
+#ifdef USE_OPENXR
+	if (OXR_Eye () >= 0)
+	{
+		r_scene_vrect = (vrect_t){0};
+		r_scene_vrect.width = vid.render_width;
+		r_scene_vrect.height = vid.render_height;
+	}
+#endif
 
 	// current viewleaf
 	r_oldviewleaf = r_viewleaf;
@@ -437,6 +457,20 @@ static void R_SetupViewBeforeMark (void *unused)
 	}
 	// johnfitz
 
+#ifdef USE_OPENXR
+	if (OXR_Eye () >= 0)
+	{
+		// Preserve stock zoom and the alternate underwater FOV effect while
+		// retaining the runtime's asymmetric optical projection at normal zoom.
+		extern cvar_t scr_fov;
+		const float	  zoom = tanf (DEG2RAD (scr_fov.value * 0.5f)) / tanf (DEG2RAD (r_refdef.basefov * 0.5f));
+		xr_projection_scale[0] = zoom * tanf (DEG2RAD (r_refdef.fov_x * 0.5f)) / tanf (DEG2RAD (r_fovx * 0.5f));
+		xr_projection_scale[1] = zoom * tanf (DEG2RAD (r_refdef.fov_y * 0.5f)) / tanf (DEG2RAD (r_fovy * 0.5f));
+		OXR_Fov (&r_fovx, &r_fovy);
+		r_fovx = 2 * atanf (tanf (DEG2RAD (r_fovx * 0.5f)) / xr_projection_scale[0]) / M_PI_DIV_180;
+		r_fovy = 2 * atanf (tanf (DEG2RAD (r_fovy * 0.5f)) / xr_projection_scale[1]) / M_PI_DIV_180;
+	}
+#endif
 	R_SetFrustum (r_fovx, r_fovy); // johnfitz -- use r_fov* vars
 	R_SetupMatrices ();
 	R_PrepareDebugEntityInfo ();
@@ -1691,13 +1725,17 @@ void R_RenderView (
 			R_DrawSSAOTask (NULL);
 		R_SortAlphaEntitiesTask (NULL);
 		R_DrawAlphaEntitiesTask (0, NULL);
-		PScript_FlushDlightsTask (NULL); // no-op here (spawns run on the main thread), but keeps the queues drained across mode switches
-		PScript_UpdateParticlesSetupTask (NULL);
-		for (int pi = 0; pi < q_max (Tasks_NumWorkers (), 1); pi++)
-			PScript_UpdateParticlesTask (pi, NULL);
-		PScript_LayoutParticlesTask (NULL);
-		for (int pi = 0; pi < q_max (Tasks_NumWorkers (), 1); pi++)
-			PScript_EmitParticlesTask (pi, NULL);
+		// Stereo redraws the same simulation. Advance scripted particles only once.
+		if (OXR_Eye () != 1)
+		{
+			PScript_FlushDlightsTask (NULL);
+			PScript_UpdateParticlesSetupTask (NULL);
+			for (int pi = 0; pi < q_max (Tasks_NumWorkers (), 1); pi++)
+				PScript_UpdateParticlesTask (pi, NULL);
+			PScript_LayoutParticlesTask (NULL);
+			for (int pi = 0; pi < q_max (Tasks_NumWorkers (), 1); pi++)
+				PScript_EmitParticlesTask (pi, NULL);
+		}
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
 		if (r_gpulightmapupdate.value)

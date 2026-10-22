@@ -1,13 +1,13 @@
 name: Linux CI
 
-on: [push, pull_request]
+on: workflow_dispatch
 
 jobs:
   build-linux:
     name: Build Linux
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
     steps:
     - uses: actions/checkout@v6
     - name: Determine version
@@ -37,9 +37,3 @@ jobs:
       with:
         name: vkQuake AppImage
         path: Packaging/AppImage/vkQuake-*.AppImage
-    - name: Attach to release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v2
-      with:
-        draft: true
-        files: Packaging/AppImage/vkQuake-*.AppImage

@@ -136,6 +136,7 @@ int main (int argc, char *argv[])
 	else
 		while (1)
 		{
+#ifndef USE_OPENXR
 			/* If we have no input focus at all, sleep a bit */
 			if ((!listening && !VID_HasMouseOrInputFocus ()) || cl.paused)
 			{
@@ -144,6 +145,7 @@ int main (int argc, char *argv[])
 			/* If we're minimised, sleep a bit more */
 			if (!listening && VID_IsMinimized ())
 				SDL_Delay (32);
+#endif
 			newtime = Sys_DoubleTime ();
 			time = newtime - oldtime;
 

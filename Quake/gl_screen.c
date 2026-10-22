@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // screen.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "quakedef.h"
+#include "openxr_display.h"
 
 #include "cfgfile.h"
 
@@ -1642,6 +1643,17 @@ static void SCR_DrawGUI (void *unused)
 		M_Draw (cbx);
 	}
 
+#ifdef USE_OPENXR
+	oxr_recenter_prompt_t prompt = OXR_RecenterPrompt ();
+	if (prompt != OXR_RECENTER_IDLE)
+	{
+		const char *message = prompt == OXR_RECENTER_READY		? "Press Mouse1 to recenter"
+							  : prompt == OXR_RECENTER_APPLYING ? "Recentering..."
+																: "Mouse1: confirm  Mouse2: retry";
+		GL_SetCanvas (cbx, CANVAS_MENU);
+		Draw_String (cbx, (320 - strlen (message) * 8) / 2.0f, 96, message);
+	}
+#endif
 	SDL_UnlockMutex (draw_qcvm_mutex);
 	R_EndDebugUtilsLabel (cbx);
 }
@@ -1713,6 +1725,79 @@ void SCR_UpdateScreen (qboolean use_tasks)
 
 	// decide on the height of the console
 	con_forcedup = !cl.worldmodel || cls.signon != SIGNONS;
+
+#ifdef USE_OPENXR
+	// One game update, two eye draws. Do not run V_SetupFrame or advance the
+	// console, view bob, damage blend, etc. a second time for the right eye.
+	GL_SynchronizeEndRenderingTask ();
+	if (!OXR_BeginFrame ())
+	{
+		in_update_screen = false;
+		return;
+	}
+	qboolean rendered = true;
+	float	 viewentity_pitch = 0;
+	vec3_t	 center_vieworg;
+	vec3_t	 base_viewangles;
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		OXR_SetEye (eye);
+		task_handle_t unused = INVALID_TASK_HANDLE;
+		if (!GL_BeginRendering (false, &unused, &glwidth, &glheight))
+		{
+			rendered = false;
+			break;
+		}
+		if (vid.recalc_refdef)
+			SCR_CalcRefdef ();
+		if (eye == 0)
+		{
+			SCR_SetupFrame (NULL);
+			VectorCopy (r_refdef.vieworg, center_vieworg);
+			VectorCopy (r_refdef.viewangles, base_viewangles);
+		}
+		if (!con_forcedup)
+		{
+			// Stock chase-camera drawing temporarily scales the player model's
+			// pitch. Start each eye with the same entity state.
+			if (eye == 0)
+				viewentity_pitch = cl.entities[cl.viewentity].angles[PITCH];
+			else
+				cl.entities[cl.viewentity].angles[PITCH] = viewentity_pitch;
+		}
+		// Expose the eye origin to every renderer culling path, then restore
+		// the stock camera before GUI, audio, or the next game update can use it.
+		OXR_ApplyView (center_vieworg, base_viewangles, r_refdef.vieworg, r_refdef.viewangles);
+		V_RenderView (false, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE);
+		if (con_forcedup)
+			OXR_ViewProjection (vulkan_globals.view_projection_matrix, r_refdef.vieworg, r_refdef.viewangles);
+		if (eye == 0)
+		{
+			vec3_t start, forward, right, up, end, target, normal;
+			VectorCopy (center_vieworg, start);
+			if (!con_forcedup)
+			{
+				VectorCopy (cl.entities[cl.viewentity].origin, start);
+				start[2] += 20; // Stock Quake weapon aim origin.
+			}
+			AngleVectors (cl.viewangles, forward, right, up);
+			VectorMA (start, 8192, forward, end);
+			VectorCopy (end, target);
+			if (!con_forcedup)
+				CL_TraceLine (start, end, target, normal, NULL);
+			OXR_SetAim (start, cl.viewangles, target);
+		}
+		VectorCopy (center_vieworg, r_refdef.vieworg);
+		VectorCopy (base_viewangles, r_refdef.viewangles);
+		S_ExtraUpdate ();
+		SCR_DrawGUI (NULL);
+		GL_EndRendering (false, eye == 1);
+	}
+	SCR_DrawDone (NULL);
+	OXR_EndFrame (rendered);
+	in_update_screen = false;
+	return;
+#endif
 
 	task_handle_t begin_rendering_task = INVALID_TASK_HANDLE;
 	if (!GL_BeginRendering (use_tasks, &begin_rendering_task, &glwidth, &glheight))

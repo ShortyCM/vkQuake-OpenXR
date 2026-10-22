@@ -1,13 +1,13 @@
 name: Windows arm64 CI (mingw)
 
-on: [push, pull_request]
+on: workflow_dispatch
 
 jobs:
   build-mingw:
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.os }}
     permissions:
-      contents: write
+      contents: read
 
     defaults:
       run:
@@ -72,9 +72,3 @@ jobs:
       with:
         name: vkQuake package (arm64)
         path: vkQuake-*_windows_arm64.zip
-    - name: Attach to release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v2
-      with:
-        draft: true
-        files: vkQuake-*_windows_arm64.zip

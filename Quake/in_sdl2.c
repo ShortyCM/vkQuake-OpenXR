@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "in_sdl.h"
+#include "openxr_display.h"
 
 #ifndef USE_SDL3
 
@@ -166,6 +167,9 @@ void IN_SendKeyEvents (void)
 			{
 				vid.width = event.window.data1;
 				vid.height = event.window.data2;
+#ifdef USE_OPENXR
+				OXR_GetSize (&vid.width, &vid.height);
+#endif
 				vid.restart_next_frame = true;
 				Cvar_FindVar ("scr_conscale")->callback (NULL);
 			}

@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "palette.h"
 #include "menu.h"
 #include "steam.h"
+#include "openxr_display.h"
 
 #ifdef USE_SDL3
 #include <SDL3/SDL_vulkan.h>
@@ -131,6 +132,9 @@ static VkSurfaceKHR				vulkan_surface;
 static qboolean					surface_lost;
 static VkSurfaceCapabilitiesKHR vulkan_surface_capabilities;
 static VkSwapchainKHR			vulkan_swapchain;
+#ifdef USE_OPENXR
+static uint32_t mirror_width, mirror_height;
+#endif
 
 static uint32_t			num_swap_chain_images;
 static qboolean			render_resources_created = false;
@@ -662,6 +666,9 @@ static qboolean VID_SetMode (int width, int height, float refreshrate, qboolean 
 
 	vid.width = VID_GetCurrentWidth ();
 	vid.height = VID_GetCurrentHeight ();
+#ifdef USE_OPENXR
+	OXR_GetSize (&vid.width, &vid.height);
+#endif
 	vid.conwidth = vid.width & 0xFFFFFFF8;
 	vid.conheight = vid.conwidth * vid.height / vid.width;
 
@@ -962,7 +969,11 @@ static void GL_InitInstance (void)
 
 	instance_create_info.enabledExtensionCount = sdl_extension_count + additionalExtensionCount;
 
+#ifdef USE_OPENXR
+	err = OXR_CreateVulkanInstance (&instance_create_info, &vulkan_instance, fpGetInstanceProcAddr);
+#else
 	err = vkCreateInstance (&instance_create_info, NULL, &vulkan_instance);
+#endif
 	if (err != VK_SUCCESS)
 		Sys_Error ("Couldn't create Vulkan instance with code %i", (int)err);
 
@@ -1168,6 +1179,9 @@ static void GL_InitDevice (void)
 	}
 	vulkan_physical_device = physical_devices[device_index];
 	Mem_Free (physical_devices);
+#ifdef USE_OPENXR
+	vulkan_physical_device = OXR_PhysicalDevice (vulkan_instance);
+#endif
 
 	qboolean found_swapchain_extension = false;
 	vulkan_globals.dedicated_allocation = false;
@@ -1478,7 +1492,11 @@ static void GL_InitDevice (void)
 	device_create_info.ppEnabledExtensionNames = device_extensions;
 	device_create_info.pEnabledFeatures = &device_features;
 
+#ifdef USE_OPENXR
+	err = OXR_CreateVulkanDevice (&device_create_info, &vulkan_globals.device);
+#else
 	err = vkCreateDevice (vulkan_physical_device, &device_create_info, NULL, &vulkan_globals.device);
+#endif
 	if (err != VK_SUCCESS)
 		Sys_Error ("Couldn't create Vulkan device with code %i", (int)err);
 
@@ -2501,6 +2519,10 @@ static qboolean GL_CreateSwapChain (void)
 {
 	uint32_t i;
 	VkResult err;
+#ifdef USE_OPENXR
+	mirror_width = (uint32_t)VID_GetCurrentWidth ();
+	mirror_height = (uint32_t)VID_GetCurrentHeight ();
+#endif
 
 #if defined(VK_EXT_full_screen_exclusive)
 	qboolean use_exclusive_full_screen = false;
@@ -2551,12 +2573,16 @@ static qboolean GL_CreateSwapChain (void)
 	}
 
 	if ((vulkan_surface_capabilities.currentExtent.width != 0xFFFFFFFF || vulkan_surface_capabilities.currentExtent.height != 0xFFFFFFFF) &&
+#ifdef USE_OPENXR
+		(vulkan_surface_capabilities.currentExtent.width != mirror_width || vulkan_surface_capabilities.currentExtent.height != mirror_height))
+#else
 		(vulkan_surface_capabilities.currentExtent.width != vid.width || vulkan_surface_capabilities.currentExtent.height != vid.height))
+#endif
 	{
 		return false;
 	}
 
-#if defined(VK_KHR_present_wait2)
+#if defined(VK_KHR_present_wait2) && !defined(USE_OPENXR)
 	swapchain_present_wait = false;
 	// Present IDs and waits are only needed for frame pacing with vsync enabled.
 	if (vulkan_globals.present_wait && (vid_vsync.value > 0))
@@ -2593,6 +2619,11 @@ static qboolean GL_CreateSwapChain (void)
 
 	VkFormat		swap_chain_format = VK_FORMAT_B8G8R8A8_UNORM;
 	VkColorSpaceKHR swap_chain_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+#ifdef USE_OPENXR
+	// Blits decode/encode sRGB. Match the eye image's encoding in the mirror.
+	if (OXR_IsSRGB ())
+		swap_chain_format = VK_FORMAT_B8G8R8A8_SRGB;
+#endif
 
 	if (surface_formats[0].format != VK_FORMAT_UNDEFINED || format_count > 1)
 	{
@@ -2627,7 +2658,11 @@ static qboolean GL_CreateSwapChain (void)
 
 	// VK_PRESENT_MODE_FIFO_KHR is always supported
 	VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-	if (vid_vsync.value == 0)
+	if (vid_vsync.value == 0
+#ifdef USE_OPENXR
+		|| true // The OpenXR compositor, not the desktop monitor, paces this executable.
+#endif
+	)
 	{
 		qboolean found_immediate = false;
 		qboolean found_mailbox = false;
@@ -2671,7 +2706,14 @@ static qboolean GL_CreateSwapChain (void)
 	swapchain_create_info.imageColorSpace = swap_chain_color_space;
 	swapchain_create_info.imageExtent.width = vid.width;
 	swapchain_create_info.imageExtent.height = vid.height;
+#ifdef USE_OPENXR
+	swapchain_create_info.imageExtent.width = mirror_width;
+	swapchain_create_info.imageExtent.height = mirror_height;
+#endif
 	swapchain_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+#ifdef USE_OPENXR
+	swapchain_create_info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+#endif
 	swapchain_create_info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	swapchain_create_info.imageArrayLayers = 1;
 	swapchain_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -2700,6 +2742,9 @@ static qboolean GL_CreateSwapChain (void)
 #endif
 
 	vulkan_globals.swap_chain_format = swap_chain_format;
+#ifdef USE_OPENXR
+	vulkan_globals.swap_chain_format = OXR_Format ();
+#endif
 	Mem_Free (surface_formats);
 
 	assert (vulkan_swapchain == VK_NULL_HANDLE);
@@ -2736,7 +2781,7 @@ static qboolean GL_CreateSwapChain (void)
 
 	ZEROED_STRUCT (VkImageViewCreateInfo, image_view_create_info);
 	image_view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	image_view_create_info.format = vulkan_globals.swap_chain_format;
+	image_view_create_info.format = swap_chain_format;
 	image_view_create_info.components.r = VK_COMPONENT_SWIZZLE_R;
 	image_view_create_info.components.g = VK_COMPONENT_SWIZZLE_G;
 	image_view_create_info.components.b = VK_COMPONENT_SWIZZLE_B;
@@ -2808,10 +2853,20 @@ static void GL_CreateFrameBuffers (void)
 		.mboit_b0 = mboit_b0_buffer_view,
 		.mboit_moments = mboit_moments0_buffer_view,
 		.mboit_color = mboit_color_buffer_view,
+#ifdef USE_OPENXR
+		.swapchain_count = OXR_ImageCount (),
+		.swapchain = OXR_ImageViews (),
+#else
 		.swapchain_count = num_swap_chain_images,
 		.swapchain = swapchain_images_views,
+#endif
 	};
 	R_CreateFrameBuffers (&images);
+#ifdef USE_OPENXR
+	Con_Printf (
+		"OpenXR render targets: %d x %d, scene %d x %d; desktop mirror %u x %u\n", vid.width, vid.height, vid.render_width, vid.render_height, mirror_width,
+		mirror_height);
+#endif
 }
 
 /*
@@ -3171,6 +3226,11 @@ void GL_DrawSceneUpscale (cb_context_t *cbx)
 
 qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
 {
+#ifdef USE_OPENXR
+	// Eye targets have a runtime-defined extent independent of SDL window
+	// events. Restore it before resource sizing, pass setup, or viewport setup.
+	OXR_GetSize (&vid.width, &vid.height);
+#endif
 	if (!use_tasks)
 		GL_SynchronizeEndRenderingTask ();
 
@@ -3246,7 +3306,17 @@ qboolean GL_AcquireNextSwapChainImage (void)
 #endif
 
 	VkResult err = fpAcquireNextImageKHR (
-		vulkan_globals.device, vulkan_swapchain, UINT64_MAX, image_aquired_semaphores[current_cb_index], VK_NULL_HANDLE, &current_swapchain_buffer);
+		vulkan_globals.device, vulkan_swapchain,
+#ifdef USE_OPENXR
+		0, // The desktop mirror must never hold up headset rendering.
+#else
+		UINT64_MAX,
+#endif
+		image_aquired_semaphores[current_cb_index], VK_NULL_HANDLE, &current_swapchain_buffer);
+#ifdef USE_OPENXR
+	if (err == VK_NOT_READY || err == VK_TIMEOUT)
+		return false;
+#endif
 #if defined(VK_EXT_full_screen_exclusive)
 	if ((err == VK_ERROR_OUT_OF_DATE_KHR) || (err == VK_ERROR_SURFACE_LOST_KHR) || (err == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT))
 #else
@@ -3281,10 +3351,16 @@ void ScheduleScreenshotCopy (VkCommandBuffer command_buffer, VkBuffer *buffer, v
 		image_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		image_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 		image_barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#ifdef USE_OPENXR
+		image_barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#endif
 		image_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 		image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		image_barrier.image = swapchain_images[current_swapchain_buffer];
+#ifdef USE_OPENXR
+		image_barrier.image = OXR_Image ();
+#endif
 		image_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		image_barrier.subresourceRange.baseMipLevel = 0;
 		image_barrier.subresourceRange.levelCount = 1;
@@ -3305,7 +3381,11 @@ void ScheduleScreenshotCopy (VkCommandBuffer command_buffer, VkBuffer *buffer, v
 	image_copy.imageExtent.height = glheight;
 	image_copy.imageExtent.depth = 1;
 
+#ifdef USE_OPENXR
+	vkCmdCopyImageToBuffer (command_buffer, OXR_Image (), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, *buffer, 1, &image_copy);
+#else
 	vkCmdCopyImageToBuffer (command_buffer, swapchain_images[current_swapchain_buffer], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, *buffer, 1, &image_copy);
+#endif
 
 	{
 		ZEROED_STRUCT (VkImageMemoryBarrier, image_barrier);
@@ -3314,16 +3394,30 @@ void ScheduleScreenshotCopy (VkCommandBuffer command_buffer, VkBuffer *buffer, v
 		image_barrier.dstAccessMask = 0;
 		image_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 		image_barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#ifdef USE_OPENXR
+		image_barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		image_barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+#endif
 		image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		image_barrier.image = swapchain_images[current_swapchain_buffer];
+#ifdef USE_OPENXR
+		image_barrier.image = OXR_Image ();
+#endif
 		image_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		image_barrier.subresourceRange.baseMipLevel = 0;
 		image_barrier.subresourceRange.levelCount = 1;
 		image_barrier.subresourceRange.baseArrayLayer = 0;
 		image_barrier.subresourceRange.layerCount = 1;
 
-		vkCmdPipelineBarrier (command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &image_barrier);
+		vkCmdPipelineBarrier (
+			command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+#ifdef USE_OPENXR
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+#else
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+#endif
+			0, 0, NULL, 0, NULL, 1, &image_barrier);
 	}
 }
 
@@ -3436,6 +3530,60 @@ static void GL_RecordFrameReadback (void *data)
 	ScheduleScreenshotCopy (readback->commands, &readback->buffer, &readback->memory);
 }
 
+#ifdef USE_OPENXR
+static void GL_RecordOpenXRMirror (VkCommandBuffer cb)
+{
+	VkImageMemoryBarrier barriers[2] = {
+		{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		 .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		 .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		 .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		 .image = OXR_Image (),
+		 .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}},
+		{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		 .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		 .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		 .image = swapchain_images[current_swapchain_buffer],
+		 .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}},
+	};
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 2, barriers);
+	// Preserve the eye image's aspect ratio and letterbox the desktop mirror.
+	float					scale = q_min ((float)mirror_width / vid.width, (float)mirror_height / vid.height);
+	int						width = (int)(vid.width * scale), height = (int)(vid.height * scale);
+	int						x = ((int)mirror_width - width) / 2, y = ((int)mirror_height - height) / 2;
+	VkClearColorValue		black = {{0, 0, 0, 1}};
+	VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+	vkCmdClearColorImage (cb, barriers[1].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
+	VkImageMemoryBarrier clear_barrier = barriers[1];
+	clear_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	clear_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &clear_barrier);
+	VkImageBlit blit = {
+		.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.srcOffsets = {{0, 0, 0}, {vid.width, vid.height, 1}},
+		.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.dstOffsets = {{x, y, 0}, {x + width, y + height, 1}},
+	};
+	vkCmdBlitImage (
+		cb, OXR_Image (), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, barriers[1].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	barriers[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	barriers[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barriers[1].dstAccessMask = 0;
+	barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barriers[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	vkCmdPipelineBarrier (cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 2, barriers);
+}
+#endif
+
 static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 {
 	R_SubmitStagingBuffers ();
@@ -3468,18 +3616,25 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	qboolean swapchain_acquired = parms->swapchain && GL_AcquireNextSwapChainImage ();
 	if (frame_timing_enabled)
 		rs_gpuwaitaccum_us += (uint32_t)((Sys_DoubleTime () - display_wait_start) * 1000000.0);
-	if (swapchain_acquired == true)
+	if (swapchain_acquired == true
+#ifdef USE_OPENXR
+		|| OXR_Eye () >= 0
+#endif
+	)
 	{
 		cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_POST_PROCESS];
 
 		// Render post process
 		GL_Viewport (cbx, 0, 0, vid.width, vid.height, 0.0f, 1.0f);
-		float postprocess_values[2] = {vid_gamma.value, q_min (2.0f, q_max (1.0f, vid_contrast.value))};
+		float postprocess_values[3] = {vid_gamma.value, q_min (2.0f, q_max (1.0f, vid_contrast.value)), 0};
+#ifdef USE_OPENXR
+		postprocess_values[2] = OXR_IsSRGB () ? 1.0f : 0.0f;
+#endif
 
 		R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.postprocess_pipeline);
 		vkCmdBindDescriptorSets (
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.postprocess_pipeline.layout.handle, 0, 1, &postprocess_descriptor_set, 0, NULL);
-		R_PushConstants (cbx, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof (float), postprocess_values);
+		R_PushConstants (cbx, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof (postprocess_values), postprocess_values);
 		vkCmdDraw (cbx->cb, 3, 1, 0, 0);
 	}
 
@@ -3502,7 +3657,13 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	frame_readback_t readback = {.commands = render_passes_cb};
 	VkCommandBuffer	 submit_cbs[PCBX_NUM];
 	const uint32_t	 submit_count = R_RecordFrame (
-		  parms, swapchain_acquired, current_swapchain_buffer, submit_cbs, countof (submit_cbs), take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
+#ifdef USE_OPENXR
+		parms, true, OXR_ImageIndex (), submit_cbs, countof (submit_cbs), take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
+	if (swapchain_acquired)
+		GL_RecordOpenXRMirror (render_passes_cb);
+#else
+		parms, swapchain_acquired, current_swapchain_buffer, submit_cbs, countof (submit_cbs), take_screenshot ? GL_RecordFrameReadback : NULL, &readback);
+#endif
 
 	if (frame_timing_enabled && (timestamp_query_pool != VK_NULL_HANDLE))
 	{
@@ -3624,9 +3785,9 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		.v_blend[3] = v_blend[3],
 		.origin =
 			{
-				r_refdef.vieworg[0],
-				r_refdef.vieworg[1],
-				r_refdef.vieworg[2],
+				r_origin[0],
+				r_origin[1],
+				r_origin[2],
 			},
 		.forward =
 			{
@@ -3747,6 +3908,12 @@ void VID_Shutdown (void)
 {
 	if (vid_initialized)
 	{
+#ifdef USE_OPENXR
+		GL_WaitForDeviceIdle ();
+		if (render_resources_created)
+			GL_DestroyRenderResources ();
+		OXR_Shutdown ();
+#endif
 		assert (draw_context != NULL);
 		VID_DestroyCursors ();
 		SDL_DestroyWindow (draw_context);
@@ -4100,8 +4267,18 @@ void VID_Init (void)
 
 	Con_Printf ("\nVulkan Initialization\n");
 	SDL_Vulkan_LoadLibrary (NULL);
+#ifdef USE_OPENXR
+	OXR_Init ();
+#endif
 	GL_InitInstance ();
 	GL_InitDevice ();
+#ifdef USE_OPENXR
+	OXR_InitSession (vulkan_instance, vulkan_physical_device);
+	OXR_GetSize (&vid.width, &vid.height);
+	vid.conwidth = vid.width & ~7;
+	vid.conheight = vid.conwidth * vid.height / vid.width;
+	vid.recalc_refdef = true;
+#endif
 	GL_InitCommandBuffers ();
 	vulkan_globals.staging_buffer_size = INITIAL_STAGING_BUFFER_SIZE_KB * 1024;
 	R_InitStagingBuffers ();

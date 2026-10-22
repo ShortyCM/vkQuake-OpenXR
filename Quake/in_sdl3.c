@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "in_sdl.h"
+#include "openxr_display.h"
 
 #ifdef USE_SDL3
 
@@ -155,6 +156,10 @@ void IN_SendKeyEvents (void)
 		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
 			vid.width = event.window.data1;
 			vid.height = event.window.data2;
+#ifdef USE_OPENXR
+			// This event resizes the desktop mirror, never the eye images.
+			OXR_GetSize (&vid.width, &vid.height);
+#endif
 			vid.restart_next_frame = true;
 			Cvar_FindVar ("scr_conscale")->callback (NULL);
 			break;

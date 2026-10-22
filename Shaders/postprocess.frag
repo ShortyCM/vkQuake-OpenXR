@@ -6,6 +6,7 @@ layout (push_constant) uniform PushConsts
 {
 	float gamma;
 	float contrast;
+	float linearize_output;
 }
 push_constants;
 
@@ -17,5 +18,12 @@ void main ()
 {
 	vec3 frag = subpassLoad (color_input).rgb;
 	frag.rgb = frag.rgb * push_constants.contrast;
-	out_frag_color = vec4 (pow (frag, vec3 (push_constants.gamma)), 1.0);
+	frag = pow (frag, vec3 (push_constants.gamma));
+	if (push_constants.linearize_output > 0.5)
+	{
+		// Cancel the sRGB attachment's hardware encoding. The stored values
+		// then match Quake's existing gamma-corrected UNORM output.
+		frag = mix (pow ((frag + vec3 (0.055)) / 1.055, vec3 (2.4)), frag / 12.92, lessThanEqual (frag, vec3 (0.04045)));
+	}
+	out_frag_color = vec4 (frag, 1.0);
 }
