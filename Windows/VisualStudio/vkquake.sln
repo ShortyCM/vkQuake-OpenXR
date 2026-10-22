@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.32014.148
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkQuake", "vkquake.vcxproj", "{AE77266F-0A23-4F08-A491-369DE664B273}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkQuake-OpenXR", "vkquake.vcxproj", "{AE77266F-0A23-4F08-A491-369DE664B273}"
 	ProjectSection(ProjectDependencies) = postProject
 		{50420275-BAE3-4FDB-8A26-F2E07737FCD6} = {50420275-BAE3-4FDB-8A26-F2E07737FCD6}
 	EndProjectSection

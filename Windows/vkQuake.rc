@@ -33,11 +33,11 @@ BEGIN
 	BEGIN
 		BLOCK "040904E4"
 		BEGIN
-			VALUE "FileDescription",	"vkQuake Quake engine"
+			VALUE "FileDescription",	"vkQuake-OpenXR stereoscopic display"
 			VALUE "FileVersion",		VER_FILEVERSION_STR
 			VALUE "LegalCopyright",		VER_LEGAL_COPYRIGHT
-			VALUE "OriginalFilename",	"vkQuake.exe"
-			VALUE "ProductName",		"vkQuake"
+			VALUE "OriginalFilename",	"vkQuake-OpenXR.exe"
+			VALUE "ProductName",		"vkQuake-OpenXR"
 			VALUE "ProductVersion",		VER_PRODUCTVERSION_STR
 		END
 	END

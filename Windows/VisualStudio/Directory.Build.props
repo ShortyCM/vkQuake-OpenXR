@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <VULKAN_SDK Condition="'$(VULKAN_SDK)'==''">C:\VulkanSDK\1.4.363.0</VULKAN_SDK>
+    <OpenXRSDK Condition="'$(OpenXRSDK)'==''">$(MSBuildThisFileDirectory)..\..\..\OpenXR-SDK</OpenXRSDK>
+  </PropertyGroup>
+</Project>

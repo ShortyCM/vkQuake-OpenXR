@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // draw.c -- 2d drawing
 
 #include "quakedef.h"
+#include "openxr_display.h"
 
 extern cvar_t scr_style;
 
@@ -1173,6 +1174,8 @@ void Draw_FadeScreen (cb_context_t *cbx)
 GL_OrthoMatrix
 ================
 */
+static float xr_canvas_matrix[16];
+
 static void GL_OrthoMatrix (cb_context_t *cbx, float left, float right, float bottom, float top, float n, float f)
 {
 	float tx = -(right + left) / (right - left);
@@ -1196,6 +1199,7 @@ static void GL_OrthoMatrix (cb_context_t *cbx, float left, float right, float bo
 	matrix[3 * 4 + 1] = ty;
 	matrix[3 * 4 + 2] = tz;
 	matrix[3 * 4 + 3] = 1.0f;
+	memcpy (xr_canvas_matrix, matrix, sizeof (matrix));
 
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), matrix);
 }
@@ -1215,6 +1219,18 @@ void GL_Viewport (cb_context_t *cbx, float x, float y, float width, float height
 	viewport.minDepth = min_depth;
 	viewport.maxDepth = max_depth;
 
+#ifdef USE_OPENXR
+	if (OXR_Eye () >= 0 && cbx == vulkan_globals.secondary_cb_contexts[SCBX_GUI])
+	{
+		float matrix[16];
+		memcpy (matrix, xr_canvas_matrix, sizeof (matrix));
+		OXR_UIMatrix (matrix, &viewport);
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, sizeof (matrix), matrix);
+		viewport.x = viewport.y = 0;
+		viewport.width = vid.width;
+		viewport.height = vid.height;
+	}
+#endif
 	vkCmdSetViewport (cbx->cb, 0, 1, &viewport);
 }
 
@@ -1280,6 +1296,15 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		GL_Viewport (cbx, 0, glheight - WARPIMAGESIZE, WARPIMAGESIZE, WARPIMAGESIZE, 0.0f, 1.0f);
 		break;
 	case CANVAS_CROSSHAIR: // 0,0 is center of viewport
+#ifdef USE_OPENXR
+		if (OXR_Eye () >= 0)
+		{
+			s = CLAMP (1.0, scr_crosshairscale.value, 10.0);
+			GL_OrthoMatrix (cbx, -glwidth / (2 * s), glwidth / (2 * s), glheight / (2 * s), -glheight / (2 * s), -99999, 99999);
+			GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
+			break;
+		}
+#endif
 		s = CLAMP (1.0, scr_crosshairscale.value, 10.0);
 		GL_OrthoMatrix (cbx, scr_vrect.width / -2 / s, scr_vrect.width / 2 / s, scr_vrect.height / 2 / s, scr_vrect.height / -2 / s, -99999, 99999);
 		GL_Viewport (cbx, scr_vrect.x, glheight - scr_vrect.y - scr_vrect.height, scr_vrect.width & ~1, scr_vrect.height & ~1, 0.0f, 1.0f);

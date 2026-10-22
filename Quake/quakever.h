@@ -62,4 +62,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 	"vkQuake"               \
 	" " VKQUAKE_VER_STRING
 #endif
+#ifdef USE_OPENXR
+#undef ENGINE_NAME_AND_VER
+#define ENGINE_NAME_AND_VER "vkQuake-OpenXR " VKQUAKE_VER_STRING
+#endif
 #endif /* QUAKEVER_H */

@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "arch_def.h"
+#include "openxr_display.h"
 
 /* key up events are sent even if in console mode */
 
@@ -1091,6 +1092,11 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 		return; // ignore stray key up events
 
 	keydown[key] = down;
+
+#ifdef USE_OPENXR
+	if ((key == K_MOUSE1 || key == K_MOUSE2) && (!key_inputgrab.active || !down) && OXR_RecenterMouse (key == K_MOUSE2, down))
+		return;
+#endif
 
 	if (key_inputgrab.active)
 	{

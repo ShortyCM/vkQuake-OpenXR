@@ -1,0 +1,31 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals"><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)..\build\tests\</OutDir>
+    <IntDir>$(OutDir)obj\</IntDir>
+    <OpenXRSDK Condition="'$(OpenXRSDK)'==''">$(MSBuildThisFileDirectory)..\..\OpenXR-SDK</OpenXRSDK>
+    <VULKAN_SDK Condition="'$(VULKAN_SDK)'==''">C:\VulkanSDK\1.4.363.0</VULKAN_SDK>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(OpenXRSDK)\include;$(VULKAN_SDK)\Include;..\Quake;..\Windows\SDL3\include;..\Windows\misc\include</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_OPENXR;USE_SDL3;WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary><LanguageStandard_C>stdc11</LanguageStandard_C>
+      <FunctionLevelLinking>true</FunctionLevelLinking><Optimization>MaxSpeed</Optimization>
+      <WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError>
+      <DisableSpecificWarnings>4100;4127;4389;4702;4706</DisableSpecificWarnings>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(OpenXRSDK)\build\src\loader\Release\openxr_loader.lib;$(VULKAN_SDK)\Lib\vulkan-1.lib;advapi32.lib</AdditionalDependencies>
+      <OptimizeReferences>true</OptimizeReferences><SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="openxr_display_test.c" /><ClCompile Include="..\Quake\mathlib.c" /></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
